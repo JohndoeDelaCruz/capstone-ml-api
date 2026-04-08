@@ -16,7 +16,10 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for Laravel to access the API
 
 # Load model artifacts
-MODEL_DIR = 'model_artifacts'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR, 'model_artifacts')
+DATASET_PATH = os.path.join(BASE_DIR, 'fulldataset.csv')
+
 model = joblib.load(os.path.join(MODEL_DIR, 'best_rf_model.pkl'))
 preprocessor = joblib.load(os.path.join(MODEL_DIR, 'preprocessor.pkl'))
 
@@ -426,7 +429,7 @@ def top_crops():
         target_year = data.get('YEAR', None)
         
         # Load historical data
-        df = pd.read_csv('fulldataset.csv')
+        df = pd.read_csv(DATASET_PATH)
         df['Production(mt)'] = pd.to_numeric(df['Production(mt)'], errors='coerce')
         df['YEAR'] = pd.to_numeric(df['YEAR'], errors='coerce')
         
