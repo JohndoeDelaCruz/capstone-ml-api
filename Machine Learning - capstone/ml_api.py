@@ -20,7 +20,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.path.join(BASE_DIR, 'model_artifacts')
 DATASET_PATH = os.path.join(BASE_DIR, 'fulldataset.csv')
 
-model = joblib.load(os.path.join(MODEL_DIR, 'best_rf_model.pkl'))
+compressed_model_path = os.path.join(MODEL_DIR, 'best_rf_model.pkl.xz')
+raw_model_path = os.path.join(MODEL_DIR, 'best_rf_model.pkl')
+model = joblib.load(compressed_model_path if os.path.exists(compressed_model_path) else raw_model_path)
 preprocessor = joblib.load(os.path.join(MODEL_DIR, 'preprocessor.pkl'))
 
 with open(os.path.join(MODEL_DIR, 'model_metadata.json'), 'r') as f:
