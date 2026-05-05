@@ -1,0 +1,16 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+Tests/
+MD FILES/
+*.ipynb
+test_page.html
+test_api.ps1
+start_api.ps1
+simple_test.py
+FORECASTS_SAVED_SUMMARY.md
+FORECAST_FIX_SUMMARY.md
