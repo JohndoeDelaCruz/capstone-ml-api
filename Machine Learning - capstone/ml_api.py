@@ -22,11 +22,24 @@ DATASET_PATH = os.path.join(BASE_DIR, 'fulldataset.csv')
 
 compressed_model_path = os.path.join(MODEL_DIR, 'best_rf_model.pkl.xz')
 raw_model_path = os.path.join(MODEL_DIR, 'best_rf_model.pkl')
-model = joblib.load(compressed_model_path if os.path.exists(compressed_model_path) else raw_model_path)
-preprocessor = joblib.load(os.path.join(MODEL_DIR, 'preprocessor.pkl'))
+aggregate_model = None
+preprocessor = None
+
+productivity_model_path = os.path.join(MODEL_DIR, 'productivity_model.pkl.xz')
+productivity_model = (
+    joblib.load(productivity_model_path)
+    if os.path.exists(productivity_model_path)
+    else None
+)
 
 with open(os.path.join(MODEL_DIR, 'model_metadata.json'), 'r') as f:
     metadata = json.load(f)
+
+productivity_metadata_path = os.path.join(MODEL_DIR, 'productivity_model_metadata.json')
+productivity_metadata = {}
+if os.path.exists(productivity_metadata_path):
+    with open(productivity_metadata_path, 'r') as f:
+        productivity_metadata = json.load(f)
 
 with open(os.path.join(MODEL_DIR, 'categorical_values.json'), 'r') as f:
     categorical_values = json.load(f)
@@ -48,14 +61,26 @@ with open(os.path.join(MODEL_DIR, 'forecast_metadata.json'), 'r') as f:
     forecast_metadata = json.load(f)
 
 
+def get_aggregate_model():
+    """Lazy-load the legacy aggregate production model when older endpoints need it."""
+    global aggregate_model, preprocessor
+    if aggregate_model is None:
+        aggregate_model = joblib.load(compressed_model_path if os.path.exists(compressed_model_path) else raw_model_path)
+    if preprocessor is None:
+        preprocessor = joblib.load(os.path.join(MODEL_DIR, 'preprocessor.pkl'))
+    return aggregate_model
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'model_type': metadata['model_type'],
+        'productivity_model_type': productivity_metadata.get('model_type') if productivity_model else None,
         'training_date': metadata['training_date'],
-        'version': '1.0.0'
+        'productivity_training_date': productivity_metadata.get('training_date') if productivity_model else None,
+        'version': '1.1.0'
     })
 
 
@@ -64,6 +89,7 @@ def model_info():
     """Get model information and available values"""
     return jsonify({
         'metadata': metadata,
+        'productivity_metadata': productivity_metadata if productivity_model else None,
         'available_values': categorical_values,
         'feature_info': feature_info
     })
@@ -115,15 +141,20 @@ def validate_model_categories(input_data):
     return None
 
 
+def model_confidence(model_metadata):
+    """Return the model's holdout score without presenting it as a guarantee."""
+    return round(model_metadata.get('test_r2_score', model_metadata.get('best_cv_score', 0)), 4)
+
+
 @app.route('/api/predict-area-production', methods=['POST'])
 def predict_area_production():
     """
     Predict farmer-scale production from square meters.
 
-    The trained model is an aggregate production model, so tiny field areas can
-    be unstable when passed directly. This endpoint predicts a 1-hectare
-    baseline for the crop scenario, then scales that result to the requested
-    square meters.
+    The preferred model predicts productivity in metric tons per hectare from
+    planning-time fields only, then scales that yield to the requested square
+    meters. If the productivity model artifact is not present, this endpoint
+    falls back to the older aggregate production model at a 1-hectare baseline.
     """
     try:
         data = request.get_json()
@@ -143,29 +174,42 @@ def predict_area_production():
             return jsonify({'error': 'Area_sqm must be greater than zero'}), 400
 
         month_str = normalize_month(data['MONTH'])
-        input_data = pd.DataFrame([{
+        base_input = {
             'MUNICIPALITY': data['MUNICIPALITY'].upper(),
             'FARM TYPE': data['FARM_TYPE'].upper(),
             'YEAR': int(data['YEAR']),
             'MONTH': month_str,
             'CROP': data['CROP'].upper(),
-            'Area planted(ha)': 1.0
-        }])
+        }
+        input_data = pd.DataFrame([{**base_input, 'Area planted(ha)': 1.0}])
 
         validation_error = validate_model_categories(input_data)
         if validation_error:
             return validation_error
 
-        production_per_ha = float(model.predict(input_data)[0])
         area_hectares = area_sqm / 10000
+        model_used = 'aggregate_production_fallback'
+
+        if productivity_model:
+            productivity_input = pd.DataFrame([base_input])
+            production_per_ha = float(productivity_model.predict(productivity_input)[0])
+            confidence_score = model_confidence(productivity_metadata)
+            model_used = 'productivity_scaled'
+        else:
+            production_per_ha = float(get_aggregate_model().predict(input_data)[0])
+            confidence_score = model_confidence(metadata)
+
+        production_per_ha = max(0, production_per_ha)
         production = production_per_ha * area_hectares
 
         return jsonify({
             'success': True,
             'prediction': {
                 'production_mt': round(max(0, production), 2),
-                'production_per_ha_mt': round(max(0, production_per_ha), 2),
-                'confidence_score': round(metadata.get('test_r2_score', metadata.get('best_cv_score', 0)), 4)
+                'production_per_ha_mt': round(production_per_ha, 2),
+                'productivity_mt_ha': round(production_per_ha, 2),
+                'confidence_score': confidence_score,
+                'model_used': model_used
             },
             'input': {
                 'municipality': input_data['MUNICIPALITY'].iloc[0],
@@ -277,7 +321,7 @@ def predict():
             }), 400
         
         # Make prediction (model is a Pipeline that includes preprocessing)
-        prediction = model.predict(input_data)[0]
+        prediction = get_aggregate_model().predict(input_data)[0]
         
         # Calculate expected production for comparison (if provided - backward compatibility)
         area_harvested = float(data.get('Area_harvested_ha', data['Area_planted_ha']))
@@ -390,7 +434,7 @@ def batch_predict():
                 }])
                 
                 # Make prediction (model is a Pipeline that includes preprocessing)
-                prediction = model.predict(input_data)[0]
+                prediction = get_aggregate_model().predict(input_data)[0]
                 
                 results.append({
                     'index': idx,

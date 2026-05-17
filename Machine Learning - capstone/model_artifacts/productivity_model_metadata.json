@@ -1,0 +1,61 @@
+{
+    "model_type": "Extra Trees Productivity",
+    "training_date": "2026-05-17T13:46:30",
+    "target_variable": "Productivity(mt/ha)",
+    "prediction_strategy": "Predict productivity_mt_per_ha, then scale by Area_sqm / 10000.",
+    "input_features": [
+        "MUNICIPALITY",
+        "FARM TYPE",
+        "MONTH",
+        "CROP",
+        "YEAR"
+    ],
+    "categorical_features": [
+        "MUNICIPALITY",
+        "FARM TYPE",
+        "MONTH",
+        "CROP"
+    ],
+    "numerical_features": [
+        "YEAR"
+    ],
+    "n_samples_train": 15348,
+    "n_samples_test": 3837,
+    "test_r2_score": 0.8390123035040818,
+    "test_mae": 1.0939251466999924,
+    "test_rmse": 1.9457957575028721,
+    "time_holdout": {
+        "train_years": "2015-2022",
+        "test_years": "2023-2024",
+        "r2": 0.7732512836143521,
+        "mae": 1.4052397809911417,
+        "rmse": 2.4255824057599744,
+        "test_rows": 3976
+    },
+    "candidate_results": [
+        {
+            "name": "Random Forest Productivity",
+            "test_r2_score": 0.8348199920638075,
+            "test_mae": 1.2112995979458152,
+            "test_rmse": 1.970968349684902
+        },
+        {
+            "name": "Extra Trees Productivity",
+            "test_r2_score": 0.8390123035040818,
+            "test_mae": 1.0939251466999924,
+            "test_rmse": 1.9457957575028721
+        }
+    ],
+    "cleaning_summary": {
+        "raw_rows": 30968,
+        "clean_rows": 19185,
+        "exact_placeholder_rows_removed": 11391,
+        "crop_quantile_outlier_rows_removed": 265,
+        "notes": [
+            "Removed non-numeric or non-positive production/area/productivity rows.",
+            "Removed repeated 5 ha / 5 ha / 55 mt / 11 mt-ha pattern.",
+            "Removed crop-level productivity values outside the 1st-99th percentile range."
+        ]
+    },
+    "note": "Uses planning-time fields only. Area harvested is not requested from farmers."
+}
