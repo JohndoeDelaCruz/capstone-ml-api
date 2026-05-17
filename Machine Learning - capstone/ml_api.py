@@ -69,6 +69,127 @@ def model_info():
     })
 
 
+def normalize_month(month):
+    """Normalize full month names, abbreviations, or numbers to the model's 3-letter format."""
+    if isinstance(month, str):
+        month_input = month.upper().strip()
+        month_map = {
+            'JAN': 'JAN', 'JANUARY': 'JAN',
+            'FEB': 'FEB', 'FEBRUARY': 'FEB',
+            'MAR': 'MAR', 'MARCH': 'MAR',
+            'APR': 'APR', 'APRIL': 'APR',
+            'MAY': 'MAY',
+            'JUN': 'JUN', 'JUNE': 'JUN',
+            'JUL': 'JUL', 'JULY': 'JUL',
+            'AUG': 'AUG', 'AUGUST': 'AUG',
+            'SEP': 'SEP', 'SEPTEMBER': 'SEP',
+            'OCT': 'OCT', 'OCTOBER': 'OCT',
+            'NOV': 'NOV', 'NOVEMBER': 'NOV',
+            'DEC': 'DEC', 'DECEMBER': 'DEC'
+        }
+        return month_map.get(month_input, 'JAN')
+
+    return {
+        1: 'JAN', 2: 'FEB', 3: 'MAR', 4: 'APR', 5: 'MAY', 6: 'JUN',
+        7: 'JUL', 8: 'AUG', 9: 'SEP', 10: 'OCT', 11: 'NOV', 12: 'DEC'
+    }.get(int(month), 'JAN')
+
+
+def validate_model_categories(input_data):
+    """Return a Flask response tuple when categorical inputs are outside the trained model values."""
+    if input_data['MUNICIPALITY'].iloc[0] not in categorical_values['MUNICIPALITY']:
+        return jsonify({
+            'error': f'Invalid MUNICIPALITY. Must be one of: {categorical_values["MUNICIPALITY"]}'
+        }), 400
+
+    if input_data['FARM TYPE'].iloc[0] not in categorical_values['FARM TYPE']:
+        return jsonify({
+            'error': f'Invalid FARM_TYPE. Must be one of: {categorical_values["FARM TYPE"]}'
+        }), 400
+
+    if input_data['CROP'].iloc[0] not in categorical_values['CROP']:
+        return jsonify({
+            'error': f'Invalid CROP. Must be one of: {categorical_values["CROP"]}'
+        }), 400
+
+    return None
+
+
+@app.route('/api/predict-area-production', methods=['POST'])
+def predict_area_production():
+    """
+    Predict farmer-scale production from square meters.
+
+    The trained model is an aggregate production model, so tiny field areas can
+    be unstable when passed directly. This endpoint predicts a 1-hectare
+    baseline for the crop scenario, then scales that result to the requested
+    square meters.
+    """
+    try:
+        data = request.get_json()
+        required_fields = [
+            'MUNICIPALITY', 'FARM_TYPE', 'YEAR', 'MONTH',
+            'CROP', 'Area_sqm'
+        ]
+
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({
+                'error': f'Missing required fields: {", ".join(missing_fields)}'
+            }), 400
+
+        area_sqm = float(data['Area_sqm'])
+        if area_sqm <= 0:
+            return jsonify({'error': 'Area_sqm must be greater than zero'}), 400
+
+        month_str = normalize_month(data['MONTH'])
+        input_data = pd.DataFrame([{
+            'MUNICIPALITY': data['MUNICIPALITY'].upper(),
+            'FARM TYPE': data['FARM_TYPE'].upper(),
+            'YEAR': int(data['YEAR']),
+            'MONTH': month_str,
+            'CROP': data['CROP'].upper(),
+            'Area planted(ha)': 1.0
+        }])
+
+        validation_error = validate_model_categories(input_data)
+        if validation_error:
+            return validation_error
+
+        production_per_ha = float(model.predict(input_data)[0])
+        area_hectares = area_sqm / 10000
+        production = production_per_ha * area_hectares
+
+        return jsonify({
+            'success': True,
+            'prediction': {
+                'production_mt': round(max(0, production), 2),
+                'production_per_ha_mt': round(max(0, production_per_ha), 2),
+                'confidence_score': round(metadata.get('test_r2_score', metadata.get('best_cv_score', 0)), 4)
+            },
+            'input': {
+                'municipality': input_data['MUNICIPALITY'].iloc[0],
+                'farm_type': input_data['FARM TYPE'].iloc[0],
+                'year': int(input_data['YEAR'].iloc[0]),
+                'month': input_data['MONTH'].iloc[0],
+                'crop': input_data['CROP'].iloc[0],
+                'area_sqm': area_sqm,
+                'area_hectares': area_hectares
+            },
+            'timestamp': datetime.now().isoformat()
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"ERROR: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'details': traceback.format_exc()
+        }), 500
+
+
 @app.route('/api/predict', methods=['POST'])
 def predict():
     """
